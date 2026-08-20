@@ -101,3 +101,15 @@ as $$
     where s.token = share_token
       and public.is_approved();
 $$;
+
+-- ============ Realtime: приватные каналы только для одобренных ============
+-- Каналы создаются клиентом с config.private = true; доступ контролируют
+-- политики на realtime.messages.
+
+drop policy if exists "approved can read realtime" on realtime.messages;
+create policy "approved can read realtime" on realtime.messages
+    for select to authenticated using (public.is_approved());
+
+drop policy if exists "approved can write realtime" on realtime.messages;
+create policy "approved can write realtime" on realtime.messages
+    for insert to authenticated with check (public.is_approved());
