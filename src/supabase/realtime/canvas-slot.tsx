@@ -4,6 +4,7 @@ import { useAuth } from '../auth/auth-context';
 import { useChartDB } from '@/hooks/use-chartdb';
 import { acquireChannel, colorForUserId, releaseChannel } from './channel';
 import type { CursorBroadcastPayload } from './channel';
+import { LiveEdits } from './live-edits';
 
 // Trailing-edge throttle: `fn` is invoked at most once per `waitMs`, always
 // with the most recent arguments (so the final cursor position before the
@@ -239,10 +240,13 @@ export const SupabaseCanvasSlot: React.FC = () => {
     }
 
     return (
-        <ViewportPortal>
-            {Array.from(cursors.values()).map((cursor) => (
-                <RemoteCursorMarker key={cursor.userId} cursor={cursor} />
-            ))}
-        </ViewportPortal>
+        <>
+            <LiveEdits />
+            <ViewportPortal>
+                {Array.from(cursors.values()).map((cursor) => (
+                    <RemoteCursorMarker key={cursor.userId} cursor={cursor} />
+                ))}
+            </ViewportPortal>
+        </>
     );
 };

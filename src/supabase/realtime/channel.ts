@@ -51,6 +51,10 @@ export interface DiagramChannelHandle {
     onCursor: (cb: (payload: CursorBroadcastPayload) => void) => () => void;
     // Sends a cursor broadcast. Callers are responsible for throttling.
     sendCursor: (payload: CursorBroadcastPayload) => void;
+    // Live edit operations (see sync/live-ops.ts). Payload is opaque to the
+    // channel layer.
+    onOp: (cb: (payload: unknown) => void) => () => void;
+    sendOp: (payload: unknown) => void;
 }
 
 interface ManagedChannel {
@@ -58,6 +62,7 @@ interface ManagedChannel {
     refCount: number;
     presenceListeners: Set<(participants: PresenceParticipant[]) => void>;
     cursorListeners: Set<(payload: CursorBroadcastPayload) => void>;
+    opListeners: Set<(payload: unknown) => void>;
 }
 
 const registry = new Map<string, ManagedChannel>();
@@ -123,7 +128,30 @@ function toHandle(managed: ManagedChannel): DiagramChannelHandle {
                     // the user, no need to surface it.
                 });
         },
+        onOp(cb) {
+            managed.opListeners.add(cb);
+            return () => {
+                managed.opListeners.delete(cb);
+            };
+        },
+        sendOp(payload) {
+            managed.channel
+                .send({ type: 'broadcast', event: 'op', payload })
+                .catch(() => {
+                    // Best effort — the blob sync will still converge the
+                    // documents even if a live op is dropped.
+                });
+        },
     };
+}
+
+// Returns a handle to an ALREADY-ACQUIRED channel without touching the
+// refcount, or null if nobody holds one for this diagram. Used by the
+// storage bridge to broadcast live ops: the channel exists exactly while
+// the diagram's canvas is open (acquired by cursors/avatars).
+export function peekChannel(diagramId: string): DiagramChannelHandle | null {
+    const managed = registry.get(diagramId);
+    return managed ? toHandle(managed) : null;
 }
 
 // Creates (or reuses) the shared realtime channel for `diagramId` and bumps
@@ -153,6 +181,7 @@ export function acquireChannel(
         refCount: 1,
         presenceListeners: new Set(),
         cursorListeners: new Set(),
+        opListeners: new Set(),
     };
     registry.set(diagramId, managed);
 
@@ -166,7 +195,10 @@ export function acquireChannel(
                     listener(payload)
                 );
             }
-        );
+        )
+        .on('broadcast', { event: 'op' }, ({ payload }) => {
+            managed.opListeners.forEach((listener) => listener(payload));
+        });
 
     const client = supabase;
     // Private channels need a fresh JWT handed to the realtime socket
@@ -241,6 +273,7 @@ export function releaseChannel(diagramId: string): void {
     registry.delete(diagramId);
     managed.presenceListeners.clear();
     managed.cursorListeners.clear();
+    managed.opListeners.clear();
 
     if (supabase) {
         void supabase.removeChannel(managed.channel);

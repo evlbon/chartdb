@@ -1,9 +1,6 @@
 import type { StorageContext } from '@/context/storage-context/storage-context';
 import type { Diagram } from '@/lib/domain/diagram';
-import {
-    diagramFromJSONInput,
-    diagramToJSONOutput,
-} from '@/lib/export-import-utils';
+import { diagramFromContent, diagramToContent } from './serialize';
 import { supabase } from '../client';
 import type { SyncStatus } from '../types';
 
@@ -119,7 +116,7 @@ export function createDiagramSyncEngine({
 
         setStatus('syncing');
         try {
-            const content = JSON.parse(diagramToJSONOutput(diagram));
+            const content = diagramToContent(diagram);
             const { error } = await supabase.from('diagrams').upsert({
                 id: diagram.id,
                 owner_id: ownerId,
@@ -195,15 +192,11 @@ export function createDiagramSyncEngine({
     const applyRemoteDiagram = async (
         row: DiagramContentRow
     ): Promise<void> => {
-        const parsed = diagramFromJSONInput(JSON.stringify(row.content));
-        const rawContent = row.content as { createdAt?: string } | null;
+        const parsed = diagramFromContent(row.content);
 
         const diagram: Diagram = {
             ...parsed,
             id: row.id,
-            createdAt: rawContent?.createdAt
-                ? new Date(rawContent.createdAt)
-                : parsed.createdAt,
             updatedAt: new Date(row.updated_at),
         };
 
