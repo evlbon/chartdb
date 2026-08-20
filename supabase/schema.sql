@@ -67,3 +67,37 @@ drop policy if exists "own diagrams" on public.diagrams;
 create policy "own diagrams" on public.diagrams for all
     using (owner_id = auth.uid() and public.is_approved())
     with check (owner_id = auth.uid() and public.is_approved());
+
+-- ============ Шеринг: ссылка с токеном, read-only ============
+
+create table if not exists public.diagram_shares (
+    token uuid primary key default gen_random_uuid(),
+    diagram_id text not null references public.diagrams on delete cascade,
+    created_by uuid not null references auth.users on delete cascade,
+    created_at timestamptz not null default now()
+);
+create index if not exists diagram_shares_diagram_id_idx
+    on public.diagram_shares (diagram_id);
+
+alter table public.diagram_shares enable row level security;
+
+-- Владелец диаграммы управляет её шерингами
+drop policy if exists "manage own shares" on public.diagram_shares;
+create policy "manage own shares" on public.diagram_shares for all
+    using (created_by = auth.uid() and public.is_approved())
+    with check (created_by = auth.uid() and public.is_approved());
+
+-- Чтение расшаренной диаграммы — только через RPC по токену
+-- (перечисление чужих шерингов невозможно: select-политики на таблицу нет).
+create or replace function public.get_shared_diagram(share_token uuid)
+returns table (id text, name text, content jsonb, updated_at timestamptz)
+language sql
+stable
+security definer set search_path = ''
+as $$
+    select d.id, d.name, d.content, d.updated_at
+    from public.diagram_shares s
+    join public.diagrams d on d.id = s.diagram_id
+    where s.token = share_token
+      and public.is_approved();
+$$;
