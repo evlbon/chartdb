@@ -1,5 +1,6 @@
 import type { Diagram } from '../../domain/diagram';
 import { OPENAI_API_KEY, OPENAI_API_ENDPOINT, LLM_MODEL_NAME } from '@/lib/env';
+import { isAIProxyEnabled, getAIProxySettings } from '@/supabase';
 import { DatabaseType } from '@/lib/domain/database-type';
 import type { DBTable } from '@/lib/domain/db-table';
 import { dataTypeMap, type DataType } from '../data-types/data-types';
@@ -721,6 +722,10 @@ export const exportBaseSQL = ({
 };
 
 const validateConfiguration = () => {
+    if (isAIProxyEnabled()) {
+        return { useCustomEndpoint: true };
+    }
+
     const apiKey = window?.env?.OPENAI_API_KEY ?? OPENAI_API_KEY;
     const baseUrl = window?.env?.OPENAI_API_ENDPOINT ?? OPENAI_API_ENDPOINT;
     const modelName = window?.env?.LLM_MODEL_NAME ?? LLM_MODEL_NAME;
@@ -791,6 +796,11 @@ export const exportSQL = async (
         config = {
             apiKey: apiKey,
         };
+    }
+
+    const aiProxy = await getAIProxySettings();
+    if (aiProxy) {
+        config = { apiKey: aiProxy.apiKey, baseUrl: aiProxy.baseUrl };
     }
 
     const openai = createOpenAI(config);
