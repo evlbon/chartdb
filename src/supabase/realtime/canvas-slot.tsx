@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useReactFlow, ViewportPortal } from '@xyflow/react';
+import { useReactFlow, useStoreApi, ViewportPortal } from '@xyflow/react';
 import { useAuth } from '../auth/auth-context';
 import { useChartDB } from '@/hooks/use-chartdb';
 import { acquireChannel, colorForUserId, releaseChannel } from './channel';
 import type { CursorBroadcastPayload } from './channel';
 import { LiveEdits } from './live-edits';
+import { useViewerMode } from '../sharing/viewer-mode';
 
 // Trailing-edge throttle: `fn` is invoked at most once per `waitMs`, always
 // with the most recent arguments (so the final cursor position before the
@@ -102,9 +103,24 @@ export const SupabaseCanvasSlot: React.FC = () => {
     const { status, user } = useAuth();
     const { diagramId } = useChartDB();
     const { screenToFlowPosition } = useReactFlow();
+    const viewerMode = useViewerMode();
+    const storeApi = useStoreApi();
     const [cursors, setCursors] = useState<Map<string, RemoteCursor>>(
         new Map()
     );
+
+    // Страница /shared: канва только для просмотра — глушим перетаскивание
+    // и соединение узлов (upstream-овский readonly запрещает лишь удаление).
+    useEffect(() => {
+        if (!viewerMode) {
+            return;
+        }
+        storeApi.setState({
+            nodesDraggable: false,
+            nodesConnectable: false,
+            elementsSelectable: false,
+        });
+    }, [viewerMode, storeApi]);
 
     const active = status === 'approved' && !!diagramId && !!user;
     const userId = user?.id;

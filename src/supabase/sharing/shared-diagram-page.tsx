@@ -29,6 +29,8 @@ import { ThemeProvider } from '@/context/theme-context/theme-provider';
 import { ChartDBProvider } from '@/context/chartdb-context/chartdb-provider';
 import { DiffProvider } from '@/context/diff-context/diff-provider';
 import { Canvas } from '@/pages/editor-page/canvas/canvas';
+import { useChartDB } from '@/hooks/use-chartdb';
+import { viewerModeContext } from './viewer-mode';
 
 const FullScreenSpinner: React.FC = () => (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
@@ -109,6 +111,24 @@ const CopyButton: React.FC<{ row: SharedDiagramRow }> = ({ row }) => (
     </StorageProvider>
 );
 
+// ChartDBProvider сеет из prop `diagram` только сущности; diagramId у него
+// выставляет лишь загрузчик редактора. Без diagramId realtime-слоты
+// (курсоры, live-правки) считают, что диаграммы нет, и не подключаются —
+// проставляем его явно.
+const SharedDiagramBootstrap: React.FC<{ diagramId: string }> = ({
+    diagramId,
+}) => {
+    const { diagramId: currentId, updateDiagramId } = useChartDB();
+
+    useEffect(() => {
+        if (currentId !== diagramId) {
+            void updateDiagramId(diagramId);
+        }
+    }, [currentId, diagramId, updateDiagramId]);
+
+    return null;
+};
+
 const SharedDiagramPreview: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
     // diagramFromContent сохраняет id — превью «живёт» в том же realtime-
     // канале, что и редактор владельца: зритель видит его курсор и правки.
@@ -146,11 +166,14 @@ const SharedDiagramPreview: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
                 <CopyButton row={row} />
             </nav>
             <div className="relative flex-1 overflow-hidden">
-                <DiffProvider>
-                    <ChartDBProvider diagram={diagram} readonly>
-                        <Canvas initialTables={diagram.tables ?? []} />
-                    </ChartDBProvider>
-                </DiffProvider>
+                <viewerModeContext.Provider value={true}>
+                    <DiffProvider>
+                        <ChartDBProvider diagram={diagram} readonly>
+                            <SharedDiagramBootstrap diagramId={diagram.id} />
+                            <Canvas initialTables={diagram.tables ?? []} />
+                        </ChartDBProvider>
+                    </DiffProvider>
+                </viewerModeContext.Provider>
             </div>
         </section>
     );
