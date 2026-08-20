@@ -181,6 +181,14 @@ export function acquireChannel(
             );
         })
         .finally(() => {
+            // The channel may have been released while setAuth was in
+            // flight (e.g. React StrictMode's mount→cleanup→mount cycle in
+            // dev, or fast navigation between diagrams). Subscribing a
+            // removed channel would race a fresh channel with the same
+            // topic on the shared socket — skip if we're no longer current.
+            if (registry.get(diagramId) !== managed) {
+                return;
+            }
             channel.subscribe(async (subscribeStatus, error) => {
                 if (subscribeStatus === 'SUBSCRIBED') {
                     try {
