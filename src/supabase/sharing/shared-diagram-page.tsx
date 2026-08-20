@@ -1,26 +1,22 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { CloudDownload } from 'lucide-react';
+import { ReactFlowProvider } from '@xyflow/react';
 import { useAuth } from '../auth/auth-context';
 import { PendingApprovalScreen } from '../auth/require-auth';
 import { fetchSharedDiagram, type SharedDiagramRow } from './share-api';
+import { diagramFromContent } from '../sync/serialize';
 import { diagramFromJSONInput } from '@/lib/export-import-utils';
 import type { Diagram } from '@/lib/domain/diagram';
-import type { DatabaseType } from '@/lib/domain/database-type';
-import type { DBTable } from '@/lib/domain/db-table';
-import type { DBRelationship } from '@/lib/domain/db-relationship';
 import { Spinner } from '@/components/spinner/spinner';
 import { Button } from '@/components/button/button';
 import {
     Card,
-    CardContent,
     CardDescription,
     CardFooter,
     CardHeader,
     CardTitle,
 } from '@/components/card/card';
-import { Badge } from '@/components/badge/badge';
-import { Separator } from '@/components/separator/separator';
 import {
     databaseSecondaryLogoMap,
     databaseTypeToLabelMap,
@@ -30,6 +26,9 @@ import { useToast } from '@/components/toast/use-toast';
 import { LocalConfigProvider } from '@/context/local-config-context/local-config-provider';
 import { StorageProvider } from '@/context/storage-context/storage-provider';
 import { ThemeProvider } from '@/context/theme-context/theme-provider';
+import { ChartDBProvider } from '@/context/chartdb-context/chartdb-provider';
+import { DiffProvider } from '@/context/diff-context/diff-provider';
+import { Canvas } from '@/pages/editor-page/canvas/canvas';
 
 const FullScreenSpinner: React.FC = () => (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
@@ -57,32 +56,18 @@ const InvalidShareCard: React.FC = () => {
     );
 };
 
-// Shape of diagram_shares.content — a JSON blob produced by
-// diagramToJSONOutput, so it matches Diagram minus the Date fields (which
-// come through as ISO strings and are irrelevant for the preview below).
-interface SharedDiagramContent {
-    name: string;
-    databaseType: DatabaseType;
-    tables?: DBTable[];
-    relationships?: DBRelationship[];
-}
-
-const MAX_PREVIEW_TABLES = 10;
-
-const SharedDiagramPreview: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
+const CopyButtonInner: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
     const navigate = useNavigate();
     const { addDiagram } = useStorage();
     const { toast } = useToast();
     const [copying, setCopying] = useState(false);
 
-    const content = row.content as SharedDiagramContent;
-    const tables = content.tables ?? [];
-    const relationships = content.relationships ?? [];
-    const previewTables = tables.slice(0, MAX_PREVIEW_TABLES);
-
     const copyToMyDiagrams = useCallback(async () => {
         setCopying(true);
         try {
+            // Намеренно diagramFromJSONInput (а не diagramFromContent):
+            // копия должна получить СВЕЖИЕ id, чтобы стать независимой
+            // диаграммой, а не «двойником» оригинала в облаке.
             const diagram = diagramFromJSONInput(JSON.stringify(row.content));
             const now = new Date();
             const diagramToAdd: Diagram = {
@@ -104,80 +89,70 @@ const SharedDiagramPreview: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
     }, [row, addDiagram, navigate, toast]);
 
     return (
-        <div className="flex h-screen w-screen items-center justify-center overflow-auto bg-background px-4 py-10">
-            <Card className="w-full max-w-xl">
-                <CardHeader>
-                    <div className="flex items-center justify-between gap-2">
-                        <CardTitle className="truncate">{row.name}</CardTitle>
-                        <img
-                            src={databaseSecondaryLogoMap[content.databaseType]}
-                            alt={databaseTypeToLabelMap[content.databaseType]}
-                            className="h-5 max-w-fit shrink-0"
-                        />
-                    </div>
-                    <CardDescription>
-                        Shared read-only diagram —{' '}
-                        {databaseTypeToLabelMap[content.databaseType]}
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                    <div className="flex gap-4 text-sm text-muted-foreground">
-                        <span>
-                            Tables:{' '}
-                            <span className="font-semibold text-foreground">
-                                {tables.length}
-                            </span>
+        <Button disabled={copying} onClick={() => void copyToMyDiagrams()}>
+            {copying ? (
+                <Spinner size="small" className="mr-2" />
+            ) : (
+                <CloudDownload className="mr-2" size={16} />
+            )}
+            Copy to my diagrams
+        </Button>
+    );
+};
+
+// Реальное хранилище нужно только кнопке копирования. Канва ниже живёт БЕЗ
+// StorageProvider — как у template-page: readonly ChartDBProvider пишет в
+// заглушечный storage-контекст, локальная база зрителя не затрагивается.
+const CopyButton: React.FC<{ row: SharedDiagramRow }> = ({ row }) => (
+    <StorageProvider>
+        <CopyButtonInner row={row} />
+    </StorageProvider>
+);
+
+const SharedDiagramPreview: React.FC<{ row: SharedDiagramRow }> = ({ row }) => {
+    // diagramFromContent сохраняет id — превью «живёт» в том же realtime-
+    // канале, что и редактор владельца: зритель видит его курсор и правки.
+    const diagram = useMemo<Diagram | null>(() => {
+        try {
+            return diagramFromContent(row.content);
+        } catch {
+            return null;
+        }
+    }, [row]);
+
+    if (!diagram) {
+        return <InvalidShareCard />;
+    }
+
+    return (
+        <section className="flex h-screen w-screen select-none flex-col bg-background">
+            <nav className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+                <div className="flex min-w-0 items-center gap-3">
+                    <img
+                        src={databaseSecondaryLogoMap[diagram.databaseType]}
+                        alt={databaseTypeToLabelMap[diagram.databaseType]}
+                        className="h-5 max-w-fit shrink-0"
+                    />
+                    <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-semibold">
+                            {row.name}
                         </span>
-                        <span>
-                            Relationships:{' '}
-                            <span className="font-semibold text-foreground">
-                                {relationships.length}
-                            </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                            Shared read-only diagram —{' '}
+                            {databaseTypeToLabelMap[diagram.databaseType]}
                         </span>
                     </div>
-                    {previewTables.length > 0 ? (
-                        <>
-                            <Separator />
-                            <div className="flex flex-col gap-2">
-                                {previewTables.map((table) => (
-                                    <div
-                                        key={table.id}
-                                        className="flex items-center justify-between text-sm"
-                                    >
-                                        <span className="truncate">
-                                            {table.name}
-                                        </span>
-                                        <Badge variant="secondary">
-                                            {table.fields.length} columns
-                                        </Badge>
-                                    </div>
-                                ))}
-                                {tables.length > previewTables.length ? (
-                                    <span className="text-xs text-muted-foreground">
-                                        +{tables.length - previewTables.length}{' '}
-                                        more table(s)
-                                    </span>
-                                ) : null}
-                            </div>
-                        </>
-                    ) : null}
-                </CardContent>
-                <CardFooter>
-                    <Button
-                        className="w-full"
-                        disabled={copying}
-                        onClick={() => void copyToMyDiagrams()}
-                    >
-                        {copying ? (
-                            <Spinner size="small" className="mr-2" />
-                        ) : (
-                            <CloudDownload className="mr-2" size={16} />
-                        )}
-                        Copy to my diagrams
-                    </Button>
-                </CardFooter>
-            </Card>
-        </div>
+                </div>
+                <CopyButton row={row} />
+            </nav>
+            <div className="relative flex-1 overflow-hidden">
+                <DiffProvider>
+                    <ChartDBProvider diagram={diagram} readonly>
+                        <Canvas initialTables={diagram.tables ?? []} />
+                    </ChartDBProvider>
+                </DiffProvider>
+            </div>
+        </section>
     );
 };
 
@@ -243,15 +218,14 @@ const SharedDiagramGate: React.FC = () => {
     }
 };
 
-// Route target for /shared/:token. Lives outside the editor's provider
-// tree, so it wraps the (small) set of providers it needs itself — mirrors
-// clone-template-page.tsx.
+// Route target for /shared/:token. Провайдеры — по образцу template-page
+// (LocalConfig > Theme > ReactFlow), StorageProvider намеренно НЕ здесь.
 export const SharedDiagramPage: React.FC = () => (
     <LocalConfigProvider>
-        <StorageProvider>
-            <ThemeProvider>
+        <ThemeProvider>
+            <ReactFlowProvider>
                 <SharedDiagramGate />
-            </ThemeProvider>
-        </StorageProvider>
+            </ReactFlowProvider>
+        </ThemeProvider>
     </LocalConfigProvider>
 );
