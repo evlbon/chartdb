@@ -1,3 +1,4 @@
+import { SupabaseCanvasSlot } from '@/supabase';
 import React, {
     useCallback,
     useEffect,
@@ -1900,6 +1901,7 @@ export const Canvas: React.FC<CanvasProps> = ({ initialTables }) => {
                     {showFilter ? (
                         <CanvasFilter onClose={() => setShowFilter(false)} />
                     ) : null}
+                    <SupabaseCanvasSlot />
                 </ReactFlow>
                 <MarkerDefinitions />
             </div>

@@ -4,8 +4,11 @@ import { createBrowserRouter } from 'react-router-dom';
 import type { TemplatePageLoaderData } from './pages/template-page/template-page';
 import type { TemplatesPageLoaderData } from './pages/templates-page/templates-page';
 import { getTemplatesAndAllTags } from './templates-data/template-utils';
+import { supabaseRoutes } from './supabase';
+import { RequireAuth } from './supabase';
 
 const routes: RouteObject[] = [
+    ...supabaseRoutes,
     ...['', 'diagrams/:diagramId'].map((path) => ({
         path,
         async lazy() {
@@ -13,7 +16,11 @@ const routes: RouteObject[] = [
                 await import('./pages/editor-page/editor-page');
 
             return {
-                element: <EditorPage />,
+                element: (
+                    <RequireAuth>
+                        <EditorPage />
+                    </RequireAuth>
+                ),
             };
         },
     })),
